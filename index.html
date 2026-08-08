@@ -28,6 +28,10 @@
   --violet:#5B3499;
   --violet-pale:#EDE5F7;
   --trait:#D9CEBC;
+  --sncb:#2F6B4F;
+  --tec:#8A3A4A;
+  --delijn:#3B5C7E;
+  --mauve:#9A7BC8;
   --focus:#B8860B;
 }
 
@@ -197,6 +201,58 @@ body{
 
 .lien-ligne:active{border-color:var(--violet)}
 
+/* Reseaux voisins : contour plutot que fond plein, et pas de geste possible.
+   La forme dit "ça ne s'ouvre pas", le sigle dit de qui il s'agit. */
+.voisin{
+  display:inline-flex;
+  flex-direction:column;
+  align-items:center;
+  justify-content:center;
+  gap:1px;
+  min-height:48px;
+  padding:4px 12px;
+  background:transparent;
+  border:2px solid currentColor;
+  border-radius:12px;
+}
+.voisin .sigle{
+  font-size:.62rem;
+  letter-spacing:.08em;
+  text-transform:uppercase;
+  line-height:1;
+  opacity:.85;
+}
+.voisin .valeur{
+  font-family:"Chiffres",Fraunces,"Iowan Old Style",Georgia,serif;
+  font-size:1.05rem;
+  font-weight:600;
+  line-height:1.1;
+  font-feature-settings:"tnum";
+}
+.voisin.sncb{color:var(--sncb)}
+.voisin.tec{color:var(--tec)}
+.voisin.delijn{color:var(--delijn)}
+
+/* le mode de transport colore le contour de la pastille dans la grille */
+.pastille.metro{border-color:var(--violet)}
+.pastille.tram{border-color:var(--mauve)}
+
+.legende{
+  display:flex;
+  flex-wrap:wrap;
+  gap:14px;
+  margin:14px 0 22px;
+  color:var(--encre-doux);
+  font-size:.85rem;
+}
+.legende span{display:inline-flex;align-items:center;gap:6px}
+.legende i{
+  width:16px;height:16px;border-radius:5px;
+  border:2px solid var(--trait);background:#fff;
+}
+.legende i.metro{border-color:var(--violet)}
+.legende i.tram{border-color:var(--mauve)}
+
 /* ---------- doublons ---------- */
 
 .doublons{
@@ -274,6 +330,10 @@ function pied(){
          '. Licence CC BY 4.0.</p>';
 }
 
+function classeReseau(reseau){
+  return reseau === "TEC" ? "tec" : reseau === "De Lijn" ? "delijn" : "sncb";
+}
+
 /* Combien de lignes differentes peut-on attraper depuis celle-ci ? */
 function compterCorrespondances(nom){
   const autres = new Set();
@@ -294,9 +354,15 @@ function afficherGrille(){
         '<p class="sous-titre">Choisissez votre ligne. Le petit chiffre indique ' +
         'combien d’autres lignes elle croise.</p>' +
       '</header>' +
+      '<p class="legende">' +
+        '<span><i class="metro"></i>métro</span>' +
+        '<span><i class="tram"></i>tram</span>' +
+        '<span><i></i>bus</span>' +
+      '</p>' +
       '<div class="grille">' +
         lignes.map(l =>
-          '<button class="pastille" data-ligne="' + echapper(l) + '">' +
+          '<button class="pastille ' + echapper(donnees.lignes[l].mode || "bus") +
+          '" data-ligne="' + echapper(l) + '">' +
             '<span>' + echapper(l) + '</span>' +
             '<span class="compte">' + compterCorrespondances(l) + '</span>' +
           '</button>'
@@ -318,21 +384,34 @@ function afficherLigne(nom){
     .map(d => d.lignes.find(x => x !== nom))
     .sort(ordreLignes);
 
-  const arrets = ligne.arrets.map(a =>
-    a.croisements.length
+  const arrets = ligne.arrets.map(a => {
+    const pastilles =
+      a.croisements.map(c =>
+        '<button class="lien-ligne" data-ligne="' + echapper(c) + '">' +
+        echapper(c) + '</button>'
+      ).join("") +
+      (a.gares || []).map(g =>
+        '<span class="voisin sncb">' +
+          '<span class="sigle">SNCB</span>' +
+          '<span class="valeur">' + echapper(g) + '</span>' +
+        '</span>'
+      ).join("") +
+      (a.voisins || []).map(v =>
+        '<span class="voisin ' + classeReseau(v.reseau) + '">' +
+          '<span class="sigle">' + echapper(v.reseau) + '</span>' +
+          '<span class="valeur">' + echapper(v.ligne) + '</span>' +
+        '</span>'
+      ).join("");
+
+    return pastilles
       ? '<li class="arret">' +
           '<div class="nom-arret">' + echapper(a.arret) + '</div>' +
-          '<div class="correspondances">' +
-            a.croisements.map(c =>
-              '<button class="lien-ligne" data-ligne="' + echapper(c) + '">' +
-              echapper(c) + '</button>'
-            ).join("") +
-          '</div>' +
+          '<div class="correspondances">' + pastilles + '</div>' +
         '</li>'
       : '<li class="arret simple">' +
           '<div class="nom-arret">' + echapper(a.arret) + '</div>' +
-        '</li>'
-  ).join("");
+        '</li>';
+  }).join("");
 
   page.innerHTML =
     '<div class="vue">' +
