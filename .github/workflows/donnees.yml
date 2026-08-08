@@ -1,1 +1,39 @@
+name: Mise a jour des donnees
 
+on:
+  workflow_dispatch:          # declenchement manuel depuis l'onglet Actions
+  schedule:
+    - cron: "37 4 * * 2"      # mardi 04h37 UTC, volontairement hors heure ronde
+
+permissions:
+  contents: write             # necessaire pour committer le JSON
+
+jobs:
+  construire:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Recuperer le depot
+        uses: actions/checkout@v4
+
+      - name: Construire croisements.json
+        run: python3 croisements.py
+
+      - name: Publier le fichier en artefact
+        uses: actions/upload-artifact@v4
+        with:
+          name: croisements-json
+          path: croisements.json
+          retention-days: 7
+
+      - name: Committer si le contenu a change
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add croisements.json
+          if git diff --cached --quiet; then
+            echo "Aucun changement, rien a committer."
+          else
+            git commit -m "Donnees STIB du $(date -u +%Y-%m-%d)"
+            git push
+          fi
