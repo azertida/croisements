@@ -15,20 +15,45 @@ metro et bus (Crainhem / Kraainem).
 La proximite se calcule par paires de points, sans construire de "lieux" :
 pas d'effet de chaine le long d'un boulevard.
 
+Les archives GTFS ajoutent trois choses :
+  - le mode de transport de chaque ligne STIB (metro, tram, bus)
+  - les gares SNCB proches d'un arret
+  - quelques lignes TEC et De Lijn choisies a la main
+
 Sortie : croisements.json
 Licence des donnees : CC BY 4.0 - attribution obligatoire (voir champ "source").
 """
 
+import csv
+import io
 import json
 import math
+import os
 import re
+import tempfile
 import unicodedata
 import urllib.request
+import zipfile
 from datetime import datetime, timezone
 
 BASE = "https://api-management-discovery-production.azure-api.net/api/datasets/stibmivb/static"
 URL_LIGNES = f"{BASE}/stopsByLine"
 URL_ARRETS = f"{BASE}/StopDetails"
+
+GTFS = "https://api-management-discovery-production.azure-api.net/api/gtfs/feed"
+URL_GTFS_STIB = f"{GTFS}/stibmivb/static"
+URL_GTFS_SNCB = f"{GTFS}/nmbssncb/static"
+
+# Lignes des reseaux voisins que l'on veut voir apparaitre, et elles seules.
+RESEAUX_VOISINS = [
+    ("TEC",     f"{GTFS}/tec/static",     {"W", "365"}),
+    ("De Lijn", f"{GTFS}/delijn/static",  {"R36", "R55"}),
+]
+
+# Cadre large autour de Bruxelles, pour ecarter le reste du pays.
+CADRE = (50.72, 50.96, 4.20, 4.52)   # lat min, lat max, lon min, lon max
+
+MODES = {"0": "tram", "1": "metro", "2": "train", "3": "bus"}
 
 SENS_REFERENCE = "City"          # sens qui fixe l'ordre d'affichage
 DISTANCE_METRES = 150            # seuil de proximite entre deux points d'arret
@@ -215,6 +240,162 @@ def lignes_a_proximite(identifiant, points, grille, pas_lat, pas_lon,
 # --------------------------------------------------------------------------
 
 # --------------------------------------------------------------------------
+# Archives GTFS
+# --------------------------------------------------------------------------
+
+def telecharger_archive(url, chemin):
+    """Ecrit l'archive sur disque : zipfile a besoin d'un fichier navigable."""
+    requete = urllib.request.Request(url, headers={"Accept": "application/zip"})
+    with urllib.request.urlopen(requete, timeout=300) as reponse, \
+         open(chemin, "wb") as fichier:
+        while True:
+            morceau = reponse.read(1 << 20)
+            if not morceau:
+                break
+            fichier.write(morceau)
+    return os.path.getsize(chemin)
+
+
+def lire_table(archive, nom):
+    """
+    Parcourt un fichier du GTFS ligne a ligne, sans le charger en entier.
+    stop_times.txt peut peser plusieurs centaines de megaoctets.
+    """
+    with archive.open(nom) as brut:
+        flux = io.TextIOWrapper(brut, encoding="utf-8-sig", newline="")
+        for enregistrement in csv.DictReader(flux):
+            yield enregistrement
+
+
+def dans_le_cadre(lat, lon):
+    lat_min, lat_max, lon_min, lon_max = CADRE
+    return lat_min <= lat <= lat_max and lon_min <= lon <= lon_max
+
+
+def coordonnees(enregistrement):
+    try:
+        return (float(enregistrement["stop_lat"]),
+                float(enregistrement["stop_lon"]))
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def modes_des_lignes(chemin):
+    """route_short_name -> mode, pour les lignes STIB."""
+    modes = {}
+    with zipfile.ZipFile(chemin) as archive:
+        for route in lire_table(archive, "routes.txt"):
+            nom = (route.get("route_short_name") or "").strip()
+            if nom:
+                modes[nom] = MODES.get((route.get("route_type") or "").strip(),
+                                       "bus")
+    return modes
+
+
+def gares_du_cadre(chemin):
+    """
+    Gares SNCB autour de Bruxelles. On ne garde que les gares meres :
+    sans elles, chaque quai de Bruxelles-Midi compterait pour une gare.
+    """
+    gares = []
+    with zipfile.ZipFile(chemin) as archive:
+        for arret in lire_table(archive, "stops.txt"):
+            if (arret.get("parent_station") or "").strip():
+                continue                      # c'est un quai, pas une gare
+            position = coordonnees(arret)
+            if not position or not dans_le_cadre(*position):
+                continue
+            nom = (arret.get("stop_name") or "").strip()
+            if nom:
+                gares.append((nom, position[0], position[1]))
+    return gares
+
+
+def arrets_de_lignes(chemin, lignes_voulues):
+    """
+    Arrets desservis par quelques lignes precises d'un reseau voisin.
+    Trois passes : routes -> trips -> stop_times, puis les coordonnees.
+    Renvoie (liste d'arrets, noms de lignes reellement trouves).
+    """
+    with zipfile.ZipFile(chemin) as archive:
+
+        routes, trouvees = {}, set()
+        for route in lire_table(archive, "routes.txt"):
+            nom = (route.get("route_short_name") or "").strip()
+            if nom in lignes_voulues:
+                routes[route["route_id"]] = nom
+                trouvees.add(nom)
+        if not routes:
+            return [], trouvees
+
+        trajets = {}
+        for trajet in lire_table(archive, "trips.txt"):
+            ligne = routes.get(trajet.get("route_id"))
+            if ligne:
+                trajets[trajet["trip_id"]] = ligne
+        if not trajets:
+            return [], trouvees
+
+        # Le gros fichier : parcouru une seule fois, en flux.
+        lignes_par_arret = {}
+        for passage in lire_table(archive, "stop_times.txt"):
+            ligne = trajets.get(passage.get("trip_id"))
+            if ligne:
+                lignes_par_arret.setdefault(passage["stop_id"], set()).add(ligne)
+        if not lignes_par_arret:
+            return [], trouvees
+
+        arrets = []
+        for arret in lire_table(archive, "stops.txt"):
+            desservi = lignes_par_arret.get(arret.get("stop_id"))
+            if not desservi:
+                continue
+            position = coordonnees(arret)
+            if not position or not dans_le_cadre(*position):
+                continue
+            for ligne in sorted(desservi):
+                arrets.append((ligne, position[0], position[1]))
+    return arrets, trouvees
+
+
+def voisinage(points_externes):
+    """
+    Petite grille pour retrouver rapidement ce qui se trouve pres d'un point.
+    points_externes : liste de (etiquette, lat, lon).
+    """
+    grille = {}
+    pas_lat = DISTANCE_METRES / METRES_PAR_DEGRE_LAT
+    pas_lon = DISTANCE_METRES / METRES_PAR_DEGRE_LON
+    for etiquette, lat, lon in points_externes:
+        case = (int(lat / pas_lat), int(lon / pas_lon))
+        grille.setdefault(case, []).append((etiquette, lat, lon))
+    return grille, pas_lat, pas_lon
+
+
+def etiquettes_proches(point, grille, pas_lat, pas_lon):
+    base_lat = int(point["lat"] / pas_lat)
+    base_lon = int(point["lon"] / pas_lon)
+    trouvees = set()
+    for dlat in (-1, 0, 1):
+        for dlon in (-1, 0, 1):
+            for etiquette, lat, lon in grille.get(
+                    (base_lat + dlat, base_lon + dlon), ()):
+                if distance_metres(point, {"lat": lat, "lon": lon}) <= DISTANCE_METRES:
+                    trouvees.add(etiquette)
+    return trouvees
+
+
+# --------------------------------------------------------------------------
+
+def arret_en_sortie(etape):
+    """Un arret : son nom, ses correspondances STIB, puis les apports voisins."""
+    sortie = {"arret": etape["nom"], "croisements": etape["croisements"]}
+    if etape.get("gares"):
+        sortie["gares"] = etape["gares"]
+    if etape.get("voisins"):
+        sortie["voisins"] = [{"reseau": r, "ligne": l} for r, l in etape["voisins"]]
+    return sortie
+
 
 def construire():
     brut_lignes = telecharger(URL_LIGNES)
@@ -277,15 +458,57 @@ def construire():
                 if autre in par_proximite:
                     trace["distance"] = True
 
+    # ---- apports des archives GTFS ----
+    modes, gares, voisins, trouvees, absentes = {}, [], [], set(), set()
+    dossier = tempfile.mkdtemp()
+    try:
+        chemin = os.path.join(dossier, "stib.zip")
+        telecharger_archive(URL_GTFS_STIB, chemin)
+        modes = modes_des_lignes(chemin)
+        os.remove(chemin)
+
+        chemin = os.path.join(dossier, "sncb.zip")
+        telecharger_archive(URL_GTFS_SNCB, chemin)
+        gares = [(nom, lat, lon) for nom, lat, lon in gares_du_cadre(chemin)]
+        os.remove(chemin)
+
+        for reseau, url, voulues in RESEAUX_VOISINS:
+            chemin = os.path.join(dossier, reseau.replace(" ", "") + ".zip")
+            telecharger_archive(url, chemin)
+            arrets, presentes = arrets_de_lignes(chemin, voulues)
+            for ligne, lat, lon in arrets:
+                voisins.append(((reseau, ligne), lat, lon))
+            trouvees |= {(reseau, l) for l in presentes}
+            absentes |= {(reseau, l) for l in voulues - presentes}
+            os.remove(chemin)
+    finally:
+        for reste in os.listdir(dossier):
+            os.remove(os.path.join(dossier, reste))
+        os.rmdir(dossier)
+
+    grille_gares, gl, gn = voisinage([(nom, lat, lon) for nom, lat, lon in gares])
+    grille_voisins, vl, vn = voisinage(voisins)
+
+    for etapes in etapes_par_ligne.values():
+        for etape in etapes:
+            proches_gares, proches_voisins = set(), set()
+            for identifiant in etape["ids"]:
+                point = points[identifiant]
+                proches_gares |= etiquettes_proches(point, grille_gares, gl, gn)
+                proches_voisins |= etiquettes_proches(point, grille_voisins, vl, vn)
+            etape["gares"] = sorted(proches_gares)
+            etape["voisins"] = sorted(proches_voisins,
+                                      key=lambda p: (p[0], cle_tri(p[1])))
+
     lignes = {}
     for ligne in sorted(etapes_par_ligne, key=cle_tri):
         lignes[ligne] = {
             "sens_reference": (SENS_REFERENCE if SENS_REFERENCE in parcours[ligne]
                                else next(iter(parcours[ligne]))),
+            "mode": modes.get(ligne, "bus"),
             # Tous les arrets, dans l'ordre : un fil troue ne se lit plus
             # comme un parcours. Ceux sans correspondance ont une liste vide.
-            "arrets": [{"arret": e["nom"], "croisements": e["croisements"]}
-                       for e in etapes_par_ligne[ligne]],
+            "arrets": [arret_en_sortie(e) for e in etapes_par_ligne[ligne]],
         }
 
     # Doublons de parcours : suites d'etapes consecutives partagees.
@@ -315,7 +538,7 @@ def construire():
 
     return {
         "genere_le": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
-        "source": "STIB-MIVB - Open Data - "
+        "source": "STIB-MIVB, NMBS-SNCB, TEC, De Lijn - Open Data - "
                   + datetime.now(timezone.utc).strftime("%Y-%m-%d"),
         "licence": "CC BY 4.0",
         "distance_metres": DISTANCE_METRES,
@@ -332,6 +555,11 @@ def construire():
             # Paires que seule l'homonymie revele : arrets etales, quais
             # eloignes de plus du seuil (type De Brouckere).
             "paires_par_nom_seul": len(seulement_nom),
+            "gares_retenues": len(gares),
+            "arrets_voisins": len(voisins),
+            # Lignes voisines demandees : celles qui repondent, et les autres.
+            "lignes_voisines_trouvees": sorted(f"{r} {l}" for r, l in trouvees),
+            "lignes_voisines_absentes": sorted(f"{r} {l}" for r, l in absentes),
             "exemples_distance_seule": [
                 {"lignes": list(paire), "via": sorted(origines[paire]["via"])[:3]}
                 for paire in seulement_distance[:ECHANTILLON_CONTROLE]
@@ -351,5 +579,12 @@ if __name__ == "__main__":
     print(f"{c['paires_total']} paires de lignes : "
           f"{c['paires_par_distance_seule']} par la distance seule, "
           f"{c['paires_par_nom_seul']} par le nom seul")
+    print(f"{c['gares_retenues']} gares SNCB, "
+          f"{c['arrets_voisins']} arrets de reseaux voisins")
+    print("lignes voisines trouvees :",
+          ", ".join(c["lignes_voisines_trouvees"]) or "aucune")
+    if c["lignes_voisines_absentes"]:
+        print("ATTENTION, introuvables :",
+              ", ".join(c["lignes_voisines_absentes"]))
     if c["identifiants_sans_nom"]:
         print(f"ATTENTION : {c['identifiants_sans_nom']} points absents de StopDetails")
