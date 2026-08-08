@@ -137,6 +137,20 @@ body{
 
 .correspondances{display:flex;flex-wrap:wrap;gap:8px}
 
+/* arret sans correspondance : present dans le fil, mais en retrait */
+.arret.simple{padding-bottom:16px}
+.arret.simple::before{
+  left:6px;top:9px;
+  width:11px;height:11px;
+  background:var(--trait);
+  border:none;
+}
+.arret.simple .nom-arret{
+  font-weight:400;
+  color:var(--encre-doux);
+  margin-bottom:0;
+}
+
 .lien-ligne{
   font-family:Fraunces,"Iowan Old Style",Georgia,serif;
   font-size:1.05rem;
@@ -268,15 +282,19 @@ function afficherLigne(nom){
     .sort(ordreLignes);
 
   const arrets = ligne.arrets.map(a =>
-    '<li class="arret">' +
-      '<div class="nom-arret">' + echapper(a.arret) + '</div>' +
-      '<div class="correspondances">' +
-        a.croisements.map(c =>
-          '<button class="lien-ligne" data-ligne="' + echapper(c) + '">' +
-          echapper(c) + '</button>'
-        ).join("") +
-      '</div>' +
-    '</li>'
+    a.croisements.length
+      ? '<li class="arret">' +
+          '<div class="nom-arret">' + echapper(a.arret) + '</div>' +
+          '<div class="correspondances">' +
+            a.croisements.map(c =>
+              '<button class="lien-ligne" data-ligne="' + echapper(c) + '">' +
+              echapper(c) + '</button>'
+            ).join("") +
+          '</div>' +
+        '</li>'
+      : '<li class="arret simple">' +
+          '<div class="nom-arret">' + echapper(a.arret) + '</div>' +
+        '</li>'
   ).join("");
 
   page.innerHTML =
@@ -284,7 +302,9 @@ function afficherLigne(nom){
       '<button class="retour" data-retour="1">← Toutes les lignes</button>' +
       '<div class="entete-ligne">' +
         '<span class="numero-ligne">' + echapper(nom) + '</span>' +
-        '<p>' + ligne.arrets.length + ' points de correspondance</p>' +
+        '<p>' + ligne.arrets.length + ' arrêts, ' +
+        ligne.arrets.filter(a => a.croisements.length).length +
+        ' avec correspondance</p>' +
       '</div>' +
       (doublons.length
         ? '<section class="doublons">' +
