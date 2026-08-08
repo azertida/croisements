@@ -237,6 +237,56 @@ body{
 .pastille.metro{border-color:var(--violet)}
 .pastille.tram{border-color:var(--mauve)}
 
+.recherche{
+  width:100%;
+  min-height:56px;
+  padding:0 16px;
+  margin-bottom:18px;
+  background:#fff;
+  border:2px solid var(--trait);
+  border-radius:14px;
+  color:var(--encre);
+  font-family:inherit;
+  font-size:1.05rem;
+}
+.recherche:focus{outline:3px solid var(--violet);outline-offset:-1px}
+.recherche::placeholder{color:var(--encre-doux)}
+
+.resultats{list-style:none;margin-bottom:18px}
+
+.resultat{
+  display:block;
+  width:100%;
+  text-align:left;
+  min-height:60px;
+  padding:12px 14px;
+  margin-bottom:8px;
+  background:#fff;
+  border:2px solid var(--trait);
+  border-radius:14px;
+  color:var(--encre);
+  font-family:inherit;
+  font-size:1.05rem;
+  cursor:pointer;
+}
+.resultat:active{background:var(--violet-pale)}
+.resultat .desservi{
+  display:block;
+  margin-top:4px;
+  color:var(--encre-doux);
+  font-size:.85rem;
+}
+
+.aucun{color:var(--encre-doux);padding:8px 0 16px}
+
+.nom-lieu{
+  font-family:Fraunces,"Iowan Old Style",Georgia,serif;
+  font-size:1.9rem;
+  font-weight:600;
+  line-height:1.15;
+  margin-bottom:6px;
+}
+
 .legende{
   display:flex;
   flex-wrap:wrap;
@@ -308,7 +358,7 @@ let donnees = null;
 
 fetch("croisements.json")
   .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
-  .then(j => { donnees = j; afficherGrille(); })
+  .then(j => { donnees = j; construireIndex(); afficherGrille(); })
   .catch(() => {
     page.innerHTML =
       '<p class="message">Les correspondances ne se chargent pas. ' +
@@ -330,6 +380,31 @@ function pied(){
          '. Licence CC BY 4.0.</p>';
 }
 
+/* Index inverse : pour chaque arret, ce qui le dessert.
+   Le JSON est range par ligne ; on le relit dans l'autre sens. */
+let index = null;
+
+function sansAccents(t){
+  return t.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase();
+}
+
+function construireIndex(){
+  index = new Map();
+  Object.keys(donnees.lignes).forEach(nomLigne => {
+    donnees.lignes[nomLigne].arrets.forEach(a => {
+      const cle = sansAccents(a.arret);
+      let lieu = index.get(cle);
+      if (!lieu) {
+        lieu = { nom: a.arret, lignes: new Set(), gares: new Set(), voisins: new Map() };
+        index.set(cle, lieu);
+      }
+      lieu.lignes.add(nomLigne);
+      (a.gares || []).forEach(g => lieu.gares.add(g));
+      (a.voisins || []).forEach(v => lieu.voisins.set(v.reseau + " " + v.ligne, v));
+    });
+  });
+}
+
 function classeReseau(reseau){
   return reseau === "TEC" ? "tec" : reseau === "De Lijn" ? "delijn" : "sncb";
 }
@@ -345,29 +420,126 @@ function compterCorrespondances(nom){
 
 /* ---------- ecran d'accueil ---------- */
 
-function afficherGrille(){
+function afficherGrille(recherche){
   const lignes = Object.keys(donnees.lignes).sort(ordreLignes);
   page.innerHTML =
     '<div class="vue">' +
       '<header class="entete">' +
         '<h1 class="titre">Croisements</h1>' +
-        '<p class="sous-titre">Choisissez votre ligne. Le petit chiffre indique ' +
-        'combien d’autres lignes elle croise.</p>' +
+        '<p class="sous-titre">Choisissez votre ligne, ou cherchez un arrêt ' +
+        'si vous ne savez pas ce qui y passe.</p>' +
       '</header>' +
-      '<p class="legende">' +
-        '<span><i class="metro"></i>métro</span>' +
-        '<span><i class="tram"></i>tram</span>' +
-        '<span><i></i>bus</span>' +
-      '</p>' +
-      '<div class="grille">' +
-        lignes.map(l =>
-          '<button class="pastille ' + echapper(donnees.lignes[l].mode || "bus") +
-          '" data-ligne="' + echapper(l) + '">' +
-            '<span>' + echapper(l) + '</span>' +
-            '<span class="compte">' + compterCorrespondances(l) + '</span>' +
-          '</button>'
-        ).join("") +
+      '<input class="recherche" id="recherche" type="search" ' +
+        'inputmode="search" autocomplete="off" autocapitalize="off" ' +
+        'placeholder="Chercher un arrêt…" value="' +
+        echapper(recherche || "") + '">' +
+      '<div id="resultats"></div>' +
+      '<div id="parcourir">' +
+        '<p class="legende">' +
+          '<span><i class="metro"></i>métro</span>' +
+          '<span><i class="tram"></i>tram</span>' +
+          '<span><i></i>bus</span>' +
+        '</p>' +
+        '<div class="grille">' +
+          lignes.map(l =>
+            '<button class="pastille ' + echapper(donnees.lignes[l].mode || "bus") +
+            '" data-ligne="' + echapper(l) + '">' +
+              '<span>' + echapper(l) + '</span>' +
+              '<span class="compte">' + compterCorrespondances(l) + '</span>' +
+            '</button>'
+          ).join("") +
+        '</div>' +
       '</div>' +
+      pied() +
+    '</div>';
+
+  const champ = document.getElementById("recherche");
+  champ.addEventListener("input", () => afficherResultats(champ.value));
+  afficherResultats(champ.value);
+  window.scrollTo(0, 0);
+}
+
+/* Resultats de recherche : on ne redessine que ce bloc, pour que le
+   clavier reste ouvert et le curseur en place pendant la frappe. */
+function afficherResultats(terme){
+  const boite = document.getElementById("resultats");
+  const parcourir = document.getElementById("parcourir");
+  const cherche = sansAccents((terme || "").trim());
+
+  if (cherche.length < 2) {
+    boite.innerHTML = "";
+    parcourir.style.display = "";
+    return;
+  }
+  parcourir.style.display = "none";
+
+  const trouves = [];
+  index.forEach((lieu, cle) => {
+    const position = cle.indexOf(cherche);
+    if (position >= 0) trouves.push({ cle: cle, lieu: lieu, position: position });
+  });
+  trouves.sort((a, b) =>
+    a.position - b.position || a.lieu.nom.localeCompare(b.lieu.nom, "fr"));
+
+  if (!trouves.length) {
+    boite.innerHTML = '<p class="aucun">Aucun arrêt de ce nom.</p>';
+    return;
+  }
+
+  boite.innerHTML = '<ul class="resultats">' +
+    trouves.slice(0, 30).map(t =>
+      '<li><button class="resultat" data-arret="' + echapper(t.cle) + '">' +
+        echapper(t.lieu.nom) +
+        '<span class="desservi">' + resume(t.lieu) + '</span>' +
+      '</button></li>'
+    ).join("") +
+  '</ul>';
+}
+
+function resume(lieu){
+  const morceaux = [];
+  const lignes = Array.from(lieu.lignes).sort(ordreLignes);
+  morceaux.push((lignes.length > 1 ? "Lignes " : "Ligne ") + lignes.join(", "));
+  if (lieu.gares.size) morceaux.push("gare SNCB");
+  if (lieu.voisins.size) {
+    morceaux.push(Array.from(lieu.voisins.values())
+      .map(v => v.reseau + " " + v.ligne).join(", "));
+  }
+  return morceaux.join(" · ");
+}
+
+/* ---------- ecran d'un arret ---------- */
+
+function afficherArret(cle){
+  const lieu = index.get(cle);
+  if (!lieu) return;
+
+  const lignes = Array.from(lieu.lignes).sort(ordreLignes);
+
+  const pastilles =
+    lignes.map(l =>
+      '<button class="lien-ligne" data-ligne="' + echapper(l) + '">' +
+      echapper(l) + '</button>'
+    ).join("") +
+    Array.from(lieu.gares).map(g =>
+      '<span class="voisin sncb">' +
+        '<span class="sigle">SNCB</span>' +
+        '<span class="valeur">' + echapper(g) + '</span>' +
+      '</span>'
+    ).join("") +
+    Array.from(lieu.voisins.values()).map(v =>
+      '<span class="voisin ' + classeReseau(v.reseau) + '">' +
+        '<span class="sigle">' + echapper(v.reseau) + '</span>' +
+        '<span class="valeur">' + echapper(v.ligne) + '</span>' +
+      '</span>'
+    ).join("");
+
+  page.innerHTML =
+    '<div class="vue">' +
+      '<button class="retour" data-retour="1">← Retour</button>' +
+      '<h1 class="nom-lieu">' + echapper(lieu.nom) + '</h1>' +
+      '<p class="sous-titre">Ce qui passe ici.</p>' +
+      '<div class="correspondances" style="margin-top:20px">' + pastilles + '</div>' +
       pied() +
     '</div>';
   window.scrollTo(0, 0);
@@ -453,9 +625,10 @@ if ("serviceWorker" in navigator) {
 /* ---------- navigation ---------- */
 
 page.addEventListener("click", e => {
-  const cible = e.target.closest("[data-ligne],[data-retour]");
+  const cible = e.target.closest("[data-ligne],[data-arret],[data-retour]");
   if (!cible) return;
   if (cible.dataset.retour) afficherGrille();
+  else if (cible.dataset.arret) afficherArret(cible.dataset.arret);
   else afficherLigne(cible.dataset.ligne);
 });
 </script>
