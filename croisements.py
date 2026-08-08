@@ -109,7 +109,7 @@ def parcours_par_ligne(brut, index_arrets):
     signal d'alerte si la correspondance se degrade un jour.
     """
     parcours = {}
-    manquants = set()
+    manquants = {}
     for entree in brut["results"]:
         ligne = str(entree["lineid"]).strip()
         if not ligne_retenue(ligne):
@@ -120,10 +120,10 @@ def parcours_par_ligne(brut, index_arrets):
         for point in points:
             identifiant = str(point["id"])
             if identifiant not in index_arrets:
-                manquants.add(identifiant)
+                manquants.setdefault(identifiant, set()).add(ligne)
                 continue
             nom = index_arrets[identifiant][0]
-            if not suite or suite[-1] != nom:      # evite les doublons colles
+            if not suite or suite[-1] != nom:      # arrets consecutifs de meme nom
                 suite.append(nom)
         parcours.setdefault(ligne, {})[sens] = suite
     return parcours, manquants
@@ -137,9 +137,11 @@ def ordre_affichage(sens_disponibles):
     reference = sens_disponibles.get(SENS_REFERENCE)
     if reference is None:
         reference = next(iter(sens_disponibles.values()))
-    ordonne = list(reference)
-    connus = set(ordonne)
-    for suite in sens_disponibles.values():
+
+    # Une ligne peut repasser par un meme arret plus loin sur son parcours
+    # (boucle de terminus). On ne garde que la premiere occurrence.
+    ordonne, connus = [], set()
+    for suite in [reference] + list(sens_disponibles.values()):
         for nom in suite:
             if nom not in connus:
                 ordonne.append(nom)
@@ -190,6 +192,18 @@ def detecter_doublons(parcours, ordres):
 
 def cle_tri(ligne):
     return (len(ligne), ligne)
+
+
+def racine_probable(identifiant, index_arrets):
+    """
+    Si un identifiant suffixe est absent, sa racine est-elle connue ?
+    Diagnostic uniquement : rien n'est corrige automatiquement ici.
+    """
+    if identifiant and not identifiant[-1].isdigit():
+        racine = identifiant[:-1]
+        if racine in index_arrets:
+            return index_arrets[racine][1]
+    return None
 
 
 # --------------------------------------------------------------------------
@@ -246,6 +260,15 @@ def construire():
             "lignes_retenues": len(parcours),
             "arrets_nommes": len(index_arrets),
             "identifiants_sans_nom": len(manquants),
+            # Detail : identifiant -> lignes concernees, plus la racine du
+            # meme identifiant si elle existe (piste de correction).
+            "detail_sans_nom": {
+                identifiant: {
+                    "lignes": sorted(lignes_concernees, key=cle_tri),
+                    "racine_connue": racine_probable(identifiant, index_arrets),
+                }
+                for identifiant, lignes_concernees in sorted(manquants.items())
+            },
         },
     }
 
