@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Croisements</title>
+<meta name="theme-color" content="#F6F1E7">
+<style>
+:root{
+  --papier:#F6F1E7;
+  --encre:#241E1A;
+  --encre-doux:#6B6055;
+  --violet:#5B3499;
+  --violet-pale:#EDE5F7;
+  --trait:#D9CEBC;
+  --focus:#B8860B;
+}
+
+*{box-sizing:border-box;margin:0;padding:0}
+
+html{-webkit-text-size-adjust:100%}
+
+body{
+  background:var(--papier);
+  color:var(--encre);
+  font-family:"Atkinson Hyperlegible","Atkinson Hyperlegible Next",
+              -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;
+  font-size:18px;
+  line-height:1.5;
+  padding:env(safe-area-inset-top) env(safe-area-inset-right)
+          env(safe-area-inset-bottom) env(safe-area-inset-left);
+}
+
+.page{max-width:640px;margin:0 auto;padding:20px 16px 64px}
+
+/* ---------- en-tete ---------- */
+
+.titre{
+  font-family:Fraunces,"Iowan Old Style","Palatino Linotype",Georgia,serif;
+  font-size:2rem;
+  font-weight:600;
+  letter-spacing:-.01em;
+  line-height:1.1;
+}
+
+.sous-titre{color:var(--encre-doux);margin-top:6px;font-size:1rem}
+
+.entete{margin-bottom:28px}
+
+/* ---------- grille des lignes ---------- */
+
+.grille{
+  display:grid;
+  grid-template-columns:repeat(auto-fill,minmax(62px,1fr));
+  gap:10px;
+}
+
+.pastille{
+  font-family:Fraunces,"Iowan Old Style",Georgia,serif;
+  font-size:1.35rem;
+  font-weight:600;
+  font-variant-numeric:tabular-nums;
+  min-height:62px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  background:#fff;
+  color:var(--encre);
+  border:2px solid var(--trait);
+  border-radius:14px;
+  cursor:pointer;
+  font-feature-settings:"tnum";
+}
+
+.pastille:active{background:var(--violet-pale)}
+
+/* ---------- vue d'une ligne ---------- */
+
+.retour{
+  display:inline-flex;
+  align-items:center;
+  gap:8px;
+  min-height:48px;
+  padding:0 16px 0 12px;
+  margin-bottom:20px;
+  background:transparent;
+  border:2px solid var(--trait);
+  border-radius:24px;
+  color:var(--encre);
+  font-family:inherit;
+  font-size:1rem;
+  cursor:pointer;
+}
+
+.numero-ligne{
+  font-family:Fraunces,"Iowan Old Style",Georgia,serif;
+  font-size:3.2rem;
+  font-weight:600;
+  line-height:1;
+  color:var(--violet);
+  font-feature-settings:"tnum";
+}
+
+.entete-ligne{display:flex;align-items:baseline;gap:14px;margin-bottom:8px}
+.entete-ligne p{color:var(--encre-doux);font-size:1rem}
+
+/* ---------- le fil de la ligne ---------- */
+
+.fil{list-style:none;margin-top:28px;position:relative}
+
+.fil::before{
+  content:"";
+  position:absolute;
+  left:9px;top:10px;bottom:10px;
+  width:4px;
+  background:var(--trait);
+  border-radius:2px;
+}
+
+.arret{position:relative;padding:0 0 26px 36px}
+
+.arret::before{
+  content:"";
+  position:absolute;
+  left:2px;top:6px;
+  width:18px;height:18px;
+  background:var(--papier);
+  border:4px solid var(--violet);
+  border-radius:50%;
+}
+
+.nom-arret{
+  font-weight:700;
+  letter-spacing:.01em;
+  margin-bottom:8px;
+}
+
+.correspondances{display:flex;flex-wrap:wrap;gap:8px}
+
+.lien-ligne{
+  font-family:Fraunces,"Iowan Old Style",Georgia,serif;
+  font-size:1.05rem;
+  font-weight:600;
+  min-width:48px;
+  min-height:48px;
+  padding:0 12px;
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  background:var(--violet-pale);
+  color:var(--violet);
+  border:2px solid transparent;
+  border-radius:12px;
+  cursor:pointer;
+  font-feature-settings:"tnum";
+}
+
+.lien-ligne:active{border-color:var(--violet)}
+
+/* ---------- doublons ---------- */
+
+.doublons{
+  margin-top:8px;
+  padding:16px;
+  background:#fff;
+  border:2px solid var(--trait);
+  border-radius:14px;
+}
+
+.doublons h2{
+  font-family:Fraunces,"Iowan Old Style",Georgia,serif;
+  font-size:1.05rem;
+  font-weight:600;
+  margin-bottom:4px;
+}
+
+.doublons p{color:var(--encre-doux);font-size:.95rem;margin-bottom:12px}
+
+/* ---------- divers ---------- */
+
+.pied{
+  margin-top:40px;
+  padding-top:16px;
+  border-top:2px solid var(--trait);
+  color:var(--encre-doux);
+  font-size:.85rem;
+}
+
+.message{padding:24px 0;color:var(--encre-doux)}
+
+button:focus-visible,[tabindex]:focus-visible{
+  outline:3px solid var(--focus);
+  outline-offset:2px;
+}
+
+@media (prefers-reduced-motion:no-preference){
+  .vue{animation:apparait .18s ease-out}
+  @keyframes apparait{from{opacity:0}to{opacity:1}}
+}
+</style>
+</head>
+<body>
+<div class="page" id="page">
+  <p class="message">Chargement des correspondances…</p>
+</div>
+
+<script>
+"use strict";
+
+const page = document.getElementById("page");
+let donnees = null;
+
+fetch("croisements.json")
+  .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
+  .then(j => { donnees = j; afficherGrille(); })
+  .catch(() => {
+    page.innerHTML =
+      '<p class="message">Les correspondances ne se chargent pas. ' +
+      'Vérifiez que le fichier croisements.json se trouve à côté de cette page.</p>';
+  });
+
+function echapper(t){
+  return String(t).replace(/[&<>"']/g, c => (
+    {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]
+  ));
+}
+
+function ordreLignes(a, b){
+  return a.length - b.length || a.localeCompare(b);
+}
+
+function pied(){
+  return '<p class="pied">Source : ' + echapper(donnees.source) +
+         '. Licence CC BY 4.0.</p>';
+}
+
+/* ---------- ecran d'accueil ---------- */
+
+function afficherGrille(){
+  const lignes = Object.keys(donnees.lignes).sort(ordreLignes);
+  page.innerHTML =
+    '<div class="vue">' +
+      '<header class="entete">' +
+        '<h1 class="titre">Croisements</h1>' +
+        '<p class="sous-titre">Choisissez votre ligne. ' +
+        'Vous verrez à chaque arrêt ce que vous pouvez prendre d’autre.</p>' +
+      '</header>' +
+      '<div class="grille">' +
+        lignes.map(l =>
+          '<button class="pastille" data-ligne="' + echapper(l) + '">' +
+          echapper(l) + '</button>'
+        ).join("") +
+      '</div>' +
+      pied() +
+    '</div>';
+  window.scrollTo(0, 0);
+}
+
+/* ---------- ecran d'une ligne ---------- */
+
+function afficherLigne(nom){
+  const ligne = donnees.lignes[nom];
+  if (!ligne) return;
+
+  const doublons = donnees.doublons
+    .filter(d => d.lignes.includes(nom))
+    .map(d => d.lignes.find(x => x !== nom))
+    .sort(ordreLignes);
+
+  const arrets = ligne.arrets.map(a =>
+    '<li class="arret">' +
+      '<div class="nom-arret">' + echapper(a.arret) + '</div>' +
+      '<div class="correspondances">' +
+        a.croisements.map(c =>
+          '<button class="lien-ligne" data-ligne="' + echapper(c) + '">' +
+          echapper(c) + '</button>'
+        ).join("") +
+      '</div>' +
+    '</li>'
+  ).join("");
+
+  page.innerHTML =
+    '<div class="vue">' +
+      '<button class="retour" data-retour="1">← Toutes les lignes</button>' +
+      '<div class="entete-ligne">' +
+        '<span class="numero-ligne">' + echapper(nom) + '</span>' +
+        '<p>' + ligne.arrets.length + ' points de correspondance</p>' +
+      '</div>' +
+      (doublons.length
+        ? '<section class="doublons">' +
+            '<h2>Fait le même trajet</h2>' +
+            '<p>Sur une partie du parcours, ces lignes doublent la ' +
+            echapper(nom) + '.</p>' +
+            '<div class="correspondances">' +
+              doublons.map(d =>
+                '<button class="lien-ligne" data-ligne="' + echapper(d) + '">' +
+                echapper(d) + '</button>'
+              ).join("") +
+            '</div>' +
+          '</section>'
+        : "") +
+      '<ol class="fil">' + arrets + '</ol>' +
+      pied() +
+    '</div>';
+  window.scrollTo(0, 0);
+}
+
+/* ---------- navigation ---------- */
+
+page.addEventListener("click", e => {
+  const cible = e.target.closest("[data-ligne],[data-retour]");
+  if (!cible) return;
+  if (cible.dataset.retour) afficherGrille();
+  else afficherLigne(cible.dataset.ligne);
+});
+</script>
+</body>
+</html>
