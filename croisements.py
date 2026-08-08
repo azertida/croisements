@@ -144,13 +144,16 @@ def indexer_points(brut):
     return index
 
 
-def parcours_par_ligne(brut, points):
+def parcours_par_ligne(brut, points, secours=None):
     """
     ligne -> {sens: [ids de points dans l'ordre]}
-    Les ids absents de StopDetails sont signales a part.
+    Un point absent de StopDetails est cherche dans stops.txt, puis sous sa
+    racine. Ce qui reste introuvable est signale a part.
     """
+    secours = secours or {}
     parcours = {}
     manquants = {}
+    recuperes = set()
     for entree in brut["results"]:
         ligne = str(entree["lineid"]).strip()
         if not ligne_retenue(ligne):
@@ -160,11 +163,18 @@ def parcours_par_ligne(brut, points):
         for point in sorted(champ_json(entree["points"]), key=lambda p: p["order"]):
             identifiant = str(point["id"])
             if identifiant not in points:
-                manquants.setdefault(identifiant, set()).add(ligne)
-                continue
+                trouve = secours.get(identifiant) or secours.get(racine(identifiant) or "")
+                if trouve:
+                    nom, lat, lon = trouve
+                    points[identifiant] = {"nom": nom, "norm": normaliser(nom),
+                                           "lat": lat, "lon": lon}
+                    recuperes.add(identifiant)
+                else:
+                    manquants.setdefault(identifiant, set()).add(ligne)
+                    continue
             suite.append(identifiant)
         parcours.setdefault(ligne, {})[sens] = suite
-    return parcours, manquants
+    return parcours, manquants, recuperes
 
 
 def etapes_ordonnees(sens_disponibles, points):
@@ -292,6 +302,33 @@ def modes_des_lignes(chemin):
     return modes
 
 
+def arrets_du_gtfs(chemin):
+    """
+    Tous les arrets de stops.txt : id -> (nom, lat, lon).
+    Sert de secours quand StopDetails ignore un point d'arret.
+    """
+    secours = {}
+    with zipfile.ZipFile(chemin) as archive:
+        for arret in lire_table(archive, "stops.txt"):
+            position = coordonnees(arret)
+            nom = (arret.get("stop_name") or "").strip().strip('"')
+            if position and nom:
+                secours[str(arret.get("stop_id")).strip()] = (nom, *position)
+    return secours
+
+
+def racine(identifiant):
+    """
+    2217F -> 2217. Les points d'arret suffixes absents de stops.txt y sont
+    souvent presents sous leur racine, qui designe le meme lieu de l'autre
+    cote de la chaussee. L'ecart est de quelques dizaines de metres, tres
+    en deca du seuil de proximite.
+    """
+    if identifiant and not identifiant[-1].isdigit():
+        return identifiant[:-1]
+    return None
+
+
 def gares_du_cadre(chemin):
     """
     Gares SNCB autour de Bruxelles. On ne garde que les gares meres :
@@ -409,8 +446,16 @@ def construire():
             "L'API pagine peut-etre desormais."
         )
 
+    dossier = tempfile.mkdtemp()
+    chemin_stib = os.path.join(dossier, "stib.zip")
+    telecharger_archive(URL_GTFS_STIB, chemin_stib)
+    modes = modes_des_lignes(chemin_stib)
+    secours = arrets_du_gtfs(chemin_stib)
+    os.remove(chemin_stib)
+
     points = indexer_points(brut_points)
-    parcours, manquants = parcours_par_ligne(brut_lignes, points)
+    parcours, manquants, recuperes = parcours_par_ligne(
+        brut_lignes, points, secours)
     if not parcours:
         raise RuntimeError("Aucune ligne reguliere retenue : format des donnees change ?")
 
@@ -459,14 +504,8 @@ def construire():
                     trace["distance"] = True
 
     # ---- apports des archives GTFS ----
-    modes, gares, voisins, trouvees, absentes = {}, [], [], set(), set()
-    dossier = tempfile.mkdtemp()
+    gares, voisins, trouvees, absentes = [], [], set(), set()
     try:
-        chemin = os.path.join(dossier, "stib.zip")
-        telecharger_archive(URL_GTFS_STIB, chemin)
-        modes = modes_des_lignes(chemin)
-        os.remove(chemin)
-
         chemin = os.path.join(dossier, "sncb.zip")
         telecharger_archive(URL_GTFS_SNCB, chemin)
         gares = [(nom, lat, lon) for nom, lat, lon in gares_du_cadre(chemin)]
@@ -547,6 +586,7 @@ def construire():
         "controle": {
             "lignes_retenues": len(parcours),
             "points_localises": len(points),
+            "points_recuperes_du_gtfs": len(recuperes),
             "identifiants_sans_nom": len(manquants),
             "paires_total": len(origines),
             # Paires que seule la proximite revele : noms differents de part
@@ -574,7 +614,8 @@ if __name__ == "__main__":
         json.dump(resultat, fichier, ensure_ascii=False, separators=(",", ":"))
 
     c = resultat["controle"]
-    print(f"{c['lignes_retenues']} lignes, {c['points_localises']} points localises, "
+    print(f"{c['lignes_retenues']} lignes, {c['points_localises']} points localises "
+          f"(dont {c['points_recuperes_du_gtfs']} repris du GTFS), "
           f"{len(resultat['doublons'])} doublons de parcours")
     print(f"{c['paires_total']} paires de lignes : "
           f"{c['paires_par_distance_seule']} par la distance seule, "
