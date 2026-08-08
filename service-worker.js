@@ -8,12 +8,16 @@
  * Pour forcer un renouvellement complet, changer VERSION.
  */
 
-const VERSION = "croisements-v1";
+const VERSION = "croisements-v2";
 
 const FICHIERS = [
   "./",
   "./index.html",
   "./croisements.json",
+  "./manifest.json",
+  "./icon-180.png",
+  "./icon-192.png",
+  "./icon-512.png",
 ];
 
 self.addEventListener("install", evenement => {

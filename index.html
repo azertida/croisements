@@ -5,7 +5,22 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Croisements</title>
 <meta name="theme-color" content="#F6F1E7">
+<meta name="description" content="Par quoi rebondir quand votre ligne s'arrête.">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Croisements">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
 <style>
+@font-face{
+  font-family:"Chiffres";
+  src:url(data:font/woff2;base64,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) format("woff2");
+  font-weight:600;
+  font-display:swap;
+  unicode-range:U+0030-0039;
+}
+
 :root{
   --papier:#F6F1E7;
   --encre:#241E1A;
@@ -36,7 +51,7 @@ body{
 /* ---------- en-tete ---------- */
 
 .titre{
-  font-family:Fraunces,"Iowan Old Style","Palatino Linotype",Georgia,serif;
+  font-family:"Chiffres",Fraunces,"Iowan Old Style","Palatino Linotype",Georgia,serif;
   font-size:2rem;
   font-weight:600;
   letter-spacing:-.01em;
@@ -56,20 +71,31 @@ body{
 }
 
 .pastille{
-  font-family:Fraunces,"Iowan Old Style",Georgia,serif;
+  font-family:"Chiffres",Fraunces,"Iowan Old Style",Georgia,serif;
   font-size:1.35rem;
   font-weight:600;
   font-variant-numeric:tabular-nums;
-  min-height:62px;
+  min-height:68px;
   display:flex;
+  flex-direction:column;
   align-items:center;
   justify-content:center;
+  gap:1px;
   background:#fff;
   color:var(--encre);
   border:2px solid var(--trait);
   border-radius:14px;
   cursor:pointer;
   font-feature-settings:"tnum";
+}
+
+/* nombre de lignes que l'on peut attraper depuis celle-ci */
+.pastille .compte{
+  font-family:inherit;
+  font-size:.7rem;
+  font-weight:400;
+  line-height:1;
+  color:var(--encre-doux);
 }
 
 .pastille:active{background:var(--violet-pale)}
@@ -93,7 +119,7 @@ body{
 }
 
 .numero-ligne{
-  font-family:Fraunces,"Iowan Old Style",Georgia,serif;
+  font-family:"Chiffres",Fraunces,"Iowan Old Style",Georgia,serif;
   font-size:3.2rem;
   font-weight:600;
   line-height:1;
@@ -152,7 +178,7 @@ body{
 }
 
 .lien-ligne{
-  font-family:Fraunces,"Iowan Old Style",Georgia,serif;
+  font-family:"Chiffres",Fraunces,"Iowan Old Style",Georgia,serif;
   font-size:1.05rem;
   font-weight:600;
   min-width:48px;
@@ -182,7 +208,7 @@ body{
 }
 
 .doublons h2{
-  font-family:Fraunces,"Iowan Old Style",Georgia,serif;
+  font-family:"Chiffres",Fraunces,"Iowan Old Style",Georgia,serif;
   font-size:1.05rem;
   font-weight:600;
   margin-bottom:4px;
@@ -248,6 +274,15 @@ function pied(){
          '. Licence CC BY 4.0.</p>';
 }
 
+/* Combien de lignes differentes peut-on attraper depuis celle-ci ? */
+function compterCorrespondances(nom){
+  const autres = new Set();
+  donnees.lignes[nom].arrets.forEach(a =>
+    a.croisements.forEach(c => autres.add(c))
+  );
+  return autres.size;
+}
+
 /* ---------- ecran d'accueil ---------- */
 
 function afficherGrille(){
@@ -256,13 +291,15 @@ function afficherGrille(){
     '<div class="vue">' +
       '<header class="entete">' +
         '<h1 class="titre">Croisements</h1>' +
-        '<p class="sous-titre">Choisissez votre ligne. ' +
-        'Vous verrez à chaque arrêt ce que vous pouvez prendre d’autre.</p>' +
+        '<p class="sous-titre">Choisissez votre ligne. Le petit chiffre indique ' +
+        'combien d’autres lignes elle croise.</p>' +
       '</header>' +
       '<div class="grille">' +
         lignes.map(l =>
           '<button class="pastille" data-ligne="' + echapper(l) + '">' +
-          echapper(l) + '</button>'
+            '<span>' + echapper(l) + '</span>' +
+            '<span class="compte">' + compterCorrespondances(l) + '</span>' +
+          '</button>'
         ).join("") +
       '</div>' +
       pied() +
