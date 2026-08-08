@@ -154,12 +154,10 @@ def etapes_ordonnees(sens_disponibles, points):
 
     etapes, connus = [], {}
     for suite in [reference] + list(sens_disponibles.values()):
-        precedent = None
         for identifiant in suite:
             norm = points[identifiant]["norm"]
-            if norm == precedent and etapes:
-                etapes[-1]["ids"].add(identifiant)
-            elif norm in connus:
+            if norm in connus:
+                # Deja rencontre : autre quai, ou passage en sens inverse.
                 connus[norm]["ids"].add(identifiant)
             else:
                 etape = {"nom": points[identifiant]["nom"],
@@ -167,7 +165,6 @@ def etapes_ordonnees(sens_disponibles, points):
                          "ids": {identifiant}}
                 etapes.append(etape)
                 connus[norm] = etape
-            precedent = norm
     return etapes
 
 
