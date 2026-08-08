@@ -179,28 +179,111 @@ def parcours_par_ligne(brut, points, secours=None):
 
 def etapes_ordonnees(sens_disponibles, points):
     """
-    Suite ordonnee d'etapes pour une ligne. Une etape regroupe les points
-    consecutifs de meme nom (les deux quais d'un meme arret) et porte la
-    liste de leurs ids. Une etape deja vue plus haut n'est pas repetee.
+    Suite ordonnee d'etapes pour une ligne.
+
+    Le sens de reference fixe l'ordre. Les arrets que seul l'autre sens
+    dessert ne sont pas ajoutes en fin de liste - ils seraient hors de leur
+    place, comme ICHEC sur la boucle de Montgomery - mais inseres a cote
+    d'un voisin deja situe.
     """
     reference = sens_disponibles.get(SENS_REFERENCE)
     if reference is None:
         reference = next(iter(sens_disponibles.values()))
 
-    etapes, connus = [], {}
-    for suite in [reference] + list(sens_disponibles.values()):
-        for identifiant in suite:
-            norm = points[identifiant]["norm"]
-            if norm in connus:
-                # Deja rencontre : autre quai, ou passage en sens inverse.
-                connus[norm]["ids"].add(identifiant)
-            else:
-                etape = {"nom": points[identifiant]["nom"],
-                         "norm": norm,
-                         "ids": {identifiant}}
-                etapes.append(etape)
-                connus[norm] = etape
-    return etapes
+    etapes = {}
+
+    def enregistrer(identifiant):
+        norm = points[identifiant]["norm"]
+        etape = etapes.get(norm)
+        if etape is None:
+            etape = {"nom": points[identifiant]["nom"], "norm": norm, "ids": set()}
+            etapes[norm] = etape
+        etape["ids"].add(identifiant)
+        return norm
+
+    ordre = []
+    for identifiant in reference:
+        norm = enregistrer(identifiant)
+        if norm not in ordre:
+            ordre.append(norm)
+
+    for suite in sens_disponibles.values():
+        if suite is reference:
+            continue
+        inserer_manquants(ordre, [enregistrer(i) for i in suite])
+
+    return [etapes[norm] for norm in ordre]
+
+
+def sens_inverse(ordre, suite):
+    """
+    Ce parcours remonte-t-il la ligne ? On compare les positions des arrets
+    deja connus : si elles decroissent, c'est le sens retour.
+    """
+    positions = [ordre.index(n) for n in suite if n in ordre]
+    montees = sum(1 for a, b in zip(positions, positions[1:]) if b > a)
+    descentes = sum(1 for a, b in zip(positions, positions[1:]) if b < a)
+    return descentes > montees
+
+
+def inserer_manquants(ordre, suite):
+    """
+    Parcourt un sens secondaire et place ses arrets inconnus par blocs,
+    chacun entre les deux arrets connus qui l'encadrent.
+    """
+    inverse = sens_inverse(ordre, suite)
+    places = set(ordre)
+    debut = 0
+    while debut < len(suite):
+        if suite[debut] in places:
+            debut += 1
+            continue
+        fin = debut
+        while fin < len(suite) and suite[fin] not in places:
+            fin += 1
+
+        bloc, vus = [], set()
+        for norm in suite[debut:fin]:
+            if norm not in vus:
+                vus.add(norm)
+                bloc.append(norm)
+
+        avant = suite[debut - 1] if debut > 0 else None
+        apres = suite[fin] if fin < len(suite) else None
+        inserer_bloc(ordre, bloc, avant, apres, inverse)
+        places.update(bloc)
+        debut = fin
+
+
+def inserer_bloc(ordre, bloc, avant, apres, inverse=False):
+    """
+    Place un bloc d'arrets inconnus entre ses deux voisins connus. Quand un
+    seul voisin est connu - un bout de boucle en tete ou en queue - le sens
+    de parcours dit de quel cote poser le bloc.
+    """
+    position_avant = ordre.index(avant) if avant in ordre else None
+    position_apres = ordre.index(apres) if apres in ordre else None
+
+    if position_avant is not None and position_apres is not None:
+        if position_avant < position_apres:
+            position = position_avant + 1
+        else:
+            position = position_apres + 1
+            bloc = list(reversed(bloc))
+    elif position_avant is not None:
+        # sens retour : ce qui suit "avant" dans ce parcours le precede
+        # dans l'ordre d'affichage
+        position = position_avant if inverse else position_avant + 1
+        if inverse:
+            bloc = list(reversed(bloc))
+    elif position_apres is not None:
+        position = position_apres + 1 if inverse else position_apres
+        if inverse:
+            bloc = list(reversed(bloc))
+    else:
+        position = len(ordre)
+
+    ordre[position:position] = bloc
 
 
 # --------------------------------------------------------------------------
