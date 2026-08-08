@@ -2,19 +2,23 @@
 """
 Construit la carte des croisements entre lignes STIB.
 
-Sources (API publique, sans clé) :
-  - stopsByLine  : pour chaque ligne et chaque sens, la suite ordonnee des arrets
-  - StopDetails  : pour chaque arret, son nom (fr/nl) et ses coordonnees
+Sources (API publique, sans cle) :
+  - stopsByLine  : pour chaque ligne et chaque sens, la suite ordonnee des points
+  - StopDetails  : pour chaque point d'arret, son nom (fr/nl) et ses coordonnees
 
-Deux lignes "se croisent" si elles desservent deux arrets portant le meme nom
-normalise. Deux lignes "se doublent" si elles partagent une suite d'au moins
-LONGUEUR_DOUBLON arrets consecutifs.
+Deux lignes "se croisent" si l'une dessert un point d'arret situe a moins de
+DISTANCE_METRES d'un point desservi par l'autre. On raisonne par paires de
+points : aucun regroupement de points en "lieux" n'est construit, donc pas
+d'effet de chaine le long d'un boulevard.
+
+Le nom d'arret ne sert plus d'identite, seulement d'etiquette d'affichage.
 
 Sortie : croisements.json
 Licence des donnees : CC BY 4.0 - attribution obligatoire (voir champ "source").
 """
 
 import json
+import math
 import re
 import unicodedata
 import urllib.request
@@ -25,8 +29,15 @@ URL_LIGNES = f"{BASE}/stopsByLine"
 URL_ARRETS = f"{BASE}/StopDetails"
 
 SENS_REFERENCE = "City"          # sens qui fixe l'ordre d'affichage
+DISTANCE_METRES = 150            # seuil de proximite entre deux points d'arret
 LONGUEUR_DOUBLON = 4             # arrets consecutifs partages = doublon de parcours
+ECHANTILLON_CONTROLE = 40        # nb max d'ecarts listes dans le bloc de controle
 SORTIE = "croisements.json"
+
+# Bruxelles : conversion degres -> metres (approximation locale suffisante
+# a cette echelle, l'erreur est tres inferieure au seuil).
+METRES_PAR_DEGRE_LAT = 111320.0
+METRES_PAR_DEGRE_LON = 111320.0 * math.cos(math.radians(50.85))
 
 
 # --------------------------------------------------------------------------
@@ -57,56 +68,59 @@ def champ_json(valeur):
 
 
 # --------------------------------------------------------------------------
-# Normalisation des noms d'arret
+# Noms (etiquettes d'affichage uniquement)
 # --------------------------------------------------------------------------
 
 def normaliser(nom):
-    """
-    Ramene un nom d'arret a une forme comparable :
-    majuscules, sans accents, ponctuation unifiee, espaces tasses.
-    C'est le seul endroit ou une erreur ferait disparaitre des croisements
-    en silence.
-    """
+    """Forme comparable d'un nom : sert au controle, plus a l'identite."""
     texte = unicodedata.normalize("NFD", nom)
     texte = "".join(c for c in texte if unicodedata.category(c) != "Mn")
-    texte = texte.upper()
-    texte = texte.replace("'", " ").replace("'", " ")
+    texte = texte.upper().replace("'", " ").replace("\u2019", " ")
     texte = texte.replace("-", " ").replace(".", " ")
     texte = re.sub(r"[^A-Z0-9 ]", " ", texte)
-    texte = re.sub(r"\s+", " ", texte).strip()
-    return texte
+    return re.sub(r"\s+", " ", texte).strip()
 
 
 def ligne_retenue(identifiant):
-    """
-    On ne garde que les lignes regulieres.
-    Exclut les T (services de remplacement) et les N (noctambus),
-    en ne conservant que les identifiants purement numeriques.
-    """
+    """Lignes regulieres seulement : exclut les T (remplacement) et N (nuit)."""
     return identifiant.isdigit()
 
 
+def cle_tri(ligne):
+    return (len(ligne), ligne)
+
+
 # --------------------------------------------------------------------------
-# Construction
+# Lecture des donnees
 # --------------------------------------------------------------------------
 
-def indexer_arrets(brut):
-    """id d'arret -> (nom normalise, nom affichable)."""
+def indexer_points(brut):
+    """id de point -> {nom, norm, lat, lon}."""
     index = {}
     for arret in brut["results"]:
         noms = champ_json(arret["name"])
         affichable = (noms.get("fr") or noms.get("nl") or "").strip()
-        if not affichable:
+        coords = champ_json(arret["gpscoordinates"])
+        if not affichable or coords is None:
             continue
-        index[str(arret["id"])] = (normaliser(affichable), affichable)
+        try:
+            lat = float(coords["latitude"])
+            lon = float(coords["longitude"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        index[str(arret["id"])] = {
+            "nom": affichable,
+            "norm": normaliser(affichable),
+            "lat": lat,
+            "lon": lon,
+        }
     return index
 
 
-def parcours_par_ligne(brut, index_arrets):
+def parcours_par_ligne(brut, points):
     """
-    ligne -> {sens: [noms normalises dans l'ordre]}
-    Les arrets absents de StopDetails sont comptes a part : c'est le
-    signal d'alerte si la correspondance se degrade un jour.
+    ligne -> {sens: [ids de points dans l'ordre]}
+    Les ids absents de StopDetails sont signales a part.
     """
     parcours = {}
     manquants = {}
@@ -115,102 +129,113 @@ def parcours_par_ligne(brut, index_arrets):
         if not ligne_retenue(ligne):
             continue
         sens = entree.get("direction", "").strip()
-        points = sorted(champ_json(entree["points"]), key=lambda p: p["order"])
         suite = []
-        for point in points:
+        for point in sorted(champ_json(entree["points"]), key=lambda p: p["order"]):
             identifiant = str(point["id"])
-            if identifiant not in index_arrets:
+            if identifiant not in points:
                 manquants.setdefault(identifiant, set()).add(ligne)
                 continue
-            nom = index_arrets[identifiant][0]
-            if not suite or suite[-1] != nom:      # arrets consecutifs de meme nom
-                suite.append(nom)
+            suite.append(identifiant)
         parcours.setdefault(ligne, {})[sens] = suite
     return parcours, manquants
 
 
-def ordre_affichage(sens_disponibles):
+def etapes_ordonnees(sens_disponibles, points):
     """
-    Ordre de lecture : le sens de reference d'abord, puis les arrets
-    que seul l'autre sens dessert, ajoutes a la suite.
+    Suite ordonnee d'etapes pour une ligne. Une etape regroupe les points
+    consecutifs de meme nom (les deux quais d'un meme arret) et porte la
+    liste de leurs ids. Une etape deja vue plus haut n'est pas repetee.
     """
     reference = sens_disponibles.get(SENS_REFERENCE)
     if reference is None:
         reference = next(iter(sens_disponibles.values()))
 
-    # Une ligne peut repasser par un meme arret plus loin sur son parcours
-    # (boucle de terminus). On ne garde que la premiere occurrence.
-    ordonne, connus = [], set()
+    etapes, connus = [], {}
     for suite in [reference] + list(sens_disponibles.values()):
-        for nom in suite:
-            if nom not in connus:
-                ordonne.append(nom)
-                connus.add(nom)
-    return ordonne
+        precedent = None
+        for identifiant in suite:
+            norm = points[identifiant]["norm"]
+            if norm == precedent and etapes:
+                etapes[-1]["ids"].add(identifiant)
+            elif norm in connus:
+                connus[norm]["ids"].add(identifiant)
+            else:
+                etape = {"nom": points[identifiant]["nom"],
+                         "norm": norm,
+                         "ids": {identifiant}}
+                etapes.append(etape)
+                connus[norm] = etape
+            precedent = norm
+    return etapes
 
 
-def calculer_croisements(parcours):
-    """nom d'arret -> ensemble des lignes qui le desservent."""
+# --------------------------------------------------------------------------
+# Proximite geographique
+# --------------------------------------------------------------------------
+
+def construire_grille(points, ids_utilises, lignes_par_point):
+    """
+    Decoupe l'espace en cases de DISTANCE_METRES de cote.
+    Comparer une case et ses huit voisines suffit a couvrir le seuil.
+    """
+    grille = {}
+    pas_lat = DISTANCE_METRES / METRES_PAR_DEGRE_LAT
+    pas_lon = DISTANCE_METRES / METRES_PAR_DEGRE_LON
+    for identifiant in ids_utilises:
+        p = points[identifiant]
+        case = (int(p["lat"] / pas_lat), int(p["lon"] / pas_lon))
+        grille.setdefault(case, []).append(identifiant)
+    return grille, pas_lat, pas_lon
+
+
+def distance_metres(a, b):
+    dlat = (a["lat"] - b["lat"]) * METRES_PAR_DEGRE_LAT
+    dlon = (a["lon"] - b["lon"]) * METRES_PAR_DEGRE_LON
+    return math.hypot(dlat, dlon)
+
+
+def lignes_a_proximite(identifiant, points, grille, pas_lat, pas_lon,
+                       lignes_par_point):
+    """Lignes desservant un point situe a moins du seuil de celui-ci."""
+    p = points[identifiant]
+    base_lat = int(p["lat"] / pas_lat)
+    base_lon = int(p["lon"] / pas_lon)
+    trouvees = set()
+    for dlat in (-1, 0, 1):
+        for dlon in (-1, 0, 1):
+            for voisin in grille.get((base_lat + dlat, base_lon + dlon), ()):
+                if voisin == identifiant:
+                    trouvees |= lignes_par_point[voisin]
+                elif distance_metres(p, points[voisin]) <= DISTANCE_METRES:
+                    trouvees |= lignes_par_point[voisin]
+    return trouvees
+
+
+# --------------------------------------------------------------------------
+# Controle : comparaison avec l'ancienne methode (egalite des noms)
+# --------------------------------------------------------------------------
+
+def paires_par_nom(parcours, points):
+    """Paires de lignes qui partagent un nom d'arret normalise."""
     desserte = {}
     for ligne, sens_disponibles in parcours.items():
         for suite in sens_disponibles.values():
-            for nom in suite:
-                desserte.setdefault(nom, set()).add(ligne)
-    return desserte
-
-
-def detecter_doublons(parcours, ordres):
-    """
-    Deux lignes se doublent si elles partagent une suite d'arrets consecutifs.
-    C'est la meme donnee que les croisements, lue autrement.
-    """
-    doublons = []
-    lignes = sorted(parcours, key=cle_tri)
-    for i, ligne_a in enumerate(lignes):
-        ensemble_a = set(ordres[ligne_a])
-        for ligne_b in lignes[i + 1:]:
-            ensemble_b = set(ordres[ligne_b])
-            communs = ensemble_a & ensemble_b
-            if len(communs) < LONGUEUR_DOUBLON:
-                continue
-            meilleure, courante = [], []
-            for nom in ordres[ligne_a]:
-                if nom in communs:
-                    courante.append(nom)
-                    if len(courante) > len(meilleure):
-                        meilleure = list(courante)
-                else:
-                    courante = []
-            if len(meilleure) >= LONGUEUR_DOUBLON:
-                doublons.append({
-                    "lignes": [ligne_a, ligne_b],
-                    "arrets": meilleure,
-                })
-    doublons.sort(key=lambda d: len(d["arrets"]), reverse=True)
-    return doublons
-
-
-def cle_tri(ligne):
-    return (len(ligne), ligne)
-
-
-def racine_probable(identifiant, index_arrets):
-    """
-    Si un identifiant suffixe est absent, sa racine est-elle connue ?
-    Diagnostic uniquement : rien n'est corrige automatiquement ici.
-    """
-    if identifiant and not identifiant[-1].isdigit():
-        racine = identifiant[:-1]
-        if racine in index_arrets:
-            return index_arrets[racine][1]
-    return None
+            for identifiant in suite:
+                desserte.setdefault(points[identifiant]["norm"], set()).add(ligne)
+    paires = {}
+    for norm, lignes in desserte.items():
+        ordonnees = sorted(lignes, key=cle_tri)
+        for i, a in enumerate(ordonnees):
+            for b in ordonnees[i + 1:]:
+                paires.setdefault((a, b), set()).add(norm)
+    return paires
 
 
 # --------------------------------------------------------------------------
 
 def construire():
     brut_lignes = telecharger(URL_LIGNES)
-    brut_arrets = telecharger(URL_ARRETS)
+    brut_points = telecharger(URL_ARRETS)
 
     annonce = brut_lignes.get("totalCount")
     recu = len(brut_lignes.get("results", []))
@@ -220,55 +245,100 @@ def construire():
             "L'API pagine peut-etre desormais."
         )
 
-    index_arrets = indexer_arrets(brut_arrets)
-    parcours, manquants = parcours_par_ligne(brut_lignes, index_arrets)
+    points = indexer_points(brut_points)
+    parcours, manquants = parcours_par_ligne(brut_lignes, points)
     if not parcours:
         raise RuntimeError("Aucune ligne reguliere retenue : format des donnees change ?")
 
-    affichables = {}
-    for identifiant, (normalise, affichable) in index_arrets.items():
-        affichables.setdefault(normalise, affichable)
+    # Quelles lignes passent par chaque point ?
+    lignes_par_point = {}
+    for ligne, sens_disponibles in parcours.items():
+        for suite in sens_disponibles.values():
+            for identifiant in suite:
+                lignes_par_point.setdefault(identifiant, set()).add(ligne)
 
-    ordres = {ligne: ordre_affichage(sens) for ligne, sens in parcours.items()}
-    desserte = calculer_croisements(parcours)
+    grille, pas_lat, pas_lon = construire_grille(
+        points, lignes_par_point.keys(), lignes_par_point)
+
+    etapes_par_ligne = {
+        ligne: etapes_ordonnees(sens_disponibles, points)
+        for ligne, sens_disponibles in parcours.items()
+    }
+
+    # Croisements : pour chaque etape, les lignes joignables a pied.
+    for ligne, etapes in etapes_par_ligne.items():
+        for etape in etapes:
+            proches = set()
+            for identifiant in etape["ids"]:
+                proches |= lignes_a_proximite(
+                    identifiant, points, grille, pas_lat, pas_lon, lignes_par_point)
+            etape["croisements"] = sorted(proches - {ligne}, key=cle_tri)
 
     lignes = {}
-    for ligne in sorted(parcours, key=cle_tri):
-        arrets = []
-        for nom in ordres[ligne]:
-            autres = sorted(desserte[nom] - {ligne}, key=cle_tri)
-            if not autres:
-                continue                      # on ne garde que les points de rebond
-            arrets.append({
-                "arret": affichables.get(nom, nom),
-                "croisements": autres,
-            })
+    for ligne in sorted(etapes_par_ligne, key=cle_tri):
         lignes[ligne] = {
-            "sens_reference": SENS_REFERENCE if SENS_REFERENCE in parcours[ligne]
-                              else next(iter(parcours[ligne])),
-            "arrets": arrets,
+            "sens_reference": (SENS_REFERENCE if SENS_REFERENCE in parcours[ligne]
+                               else next(iter(parcours[ligne]))),
+            "arrets": [{"arret": e["nom"], "croisements": e["croisements"]}
+                       for e in etapes_par_ligne[ligne] if e["croisements"]],
         }
+
+    # Doublons de parcours : suites d'etapes consecutives partagees.
+    doublons = []
+    noms_lignes = sorted(etapes_par_ligne, key=cle_tri)
+    for i, a in enumerate(noms_lignes):
+        for b in noms_lignes[i + 1:]:
+            meilleure, courante = [], []
+            for etape in etapes_par_ligne[a]:
+                if b in etape["croisements"]:
+                    courante.append(etape["nom"])
+                    if len(courante) > len(meilleure):
+                        meilleure = list(courante)
+                else:
+                    courante = []
+            if len(meilleure) >= LONGUEUR_DOUBLON:
+                doublons.append({"lignes": [a, b], "arrets": meilleure})
+    doublons.sort(key=lambda d: len(d["arrets"]), reverse=True)
+
+    # Controle : ecarts avec la methode par egalite des noms.
+    par_distance = {}
+    for ligne, etapes in etapes_par_ligne.items():
+        for etape in etapes:
+            for autre in etape["croisements"]:
+                paire = tuple(sorted((ligne, autre), key=cle_tri))
+                par_distance.setdefault(paire, set()).add(etape["nom"])
+    par_nom = paires_par_nom(parcours, points)
+
+    gagnes = sorted(set(par_distance) - set(par_nom), key=lambda p: (cle_tri(p[0]), cle_tri(p[1])))
+    perdus = sorted(set(par_nom) - set(par_distance), key=lambda p: (cle_tri(p[0]), cle_tri(p[1])))
 
     return {
         "genere_le": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
         "source": "STIB-MIVB - Open Data - "
                   + datetime.now(timezone.utc).strftime("%Y-%m-%d"),
         "licence": "CC BY 4.0",
+        "distance_metres": DISTANCE_METRES,
         "lignes": lignes,
-        "doublons": detecter_doublons(parcours, ordres),
+        "doublons": doublons,
         "controle": {
             "lignes_retenues": len(parcours),
-            "arrets_nommes": len(index_arrets),
+            "points_localises": len(points),
             "identifiants_sans_nom": len(manquants),
-            # Detail : identifiant -> lignes concernees, plus la racine du
-            # meme identifiant si elle existe (piste de correction).
-            "detail_sans_nom": {
-                identifiant: {
-                    "lignes": sorted(lignes_concernees, key=cle_tri),
-                    "racine_connue": racine_probable(identifiant, index_arrets),
-                }
-                for identifiant, lignes_concernees in sorted(manquants.items())
-            },
+            "paires_gagnees": len(gagnes),
+            "paires_perdues": len(perdus),
+            # Paires de lignes que la distance revele et que le nom ignorait :
+            # a valider, ce sont les cas type Crainhem / Kraainem.
+            "exemples_gagnees": [
+                {"lignes": list(paire), "via": sorted(par_distance[paire])[:3]}
+                for paire in gagnes[:ECHANTILLON_CONTROLE]
+            ],
+            # Paires que le nom donnait et que la distance ne voit pas :
+            # deux arrets homonymes eloignes. Si la liste est longue,
+            # le seuil est trop court.
+            "exemples_perdues": [
+                {"lignes": list(paire), "arrets": sorted(par_nom[paire])[:3]}
+                for paire in perdus[:ECHANTILLON_CONTROLE]
+            ],
         },
     }
 
@@ -278,10 +348,10 @@ if __name__ == "__main__":
     with open(SORTIE, "w", encoding="utf-8") as fichier:
         json.dump(resultat, fichier, ensure_ascii=False, separators=(",", ":"))
 
-    controle = resultat["controle"]
-    print(f"{controle['lignes_retenues']} lignes, "
-          f"{controle['arrets_nommes']} arrets nommes, "
+    c = resultat["controle"]
+    print(f"{c['lignes_retenues']} lignes, {c['points_localises']} points localises, "
           f"{len(resultat['doublons'])} doublons de parcours")
-    if controle["identifiants_sans_nom"]:
-        print(f"ATTENTION : {controle['identifiants_sans_nom']} "
-              f"identifiants d'arret sans nom (ignores)")
+    print(f"seuil {DISTANCE_METRES} m : "
+          f"{c['paires_gagnees']} paires gagnees, {c['paires_perdues']} perdues")
+    if c["identifiants_sans_nom"]:
+        print(f"ATTENTION : {c['identifiants_sans_nom']} points absents de StopDetails")
