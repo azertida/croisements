@@ -6,12 +6,14 @@ Sources (API publique, sans cle) :
   - stopsByLine  : pour chaque ligne et chaque sens, la suite ordonnee des points
   - StopDetails  : pour chaque point d'arret, son nom (fr/nl) et ses coordonnees
 
-Deux lignes "se croisent" si l'une dessert un point d'arret situe a moins de
-DISTANCE_METRES d'un point desservi par l'autre. On raisonne par paires de
-points : aucun regroupement de points en "lieux" n'est construit, donc pas
-d'effet de chaine le long d'un boulevard.
+Deux lignes "se croisent" si elles desservent un arret de meme nom, OU si
+deux de leurs points d'arret sont distants de moins de DISTANCE_METRES.
+Les deux criteres s'additionnent : l'homonymie rattrape les arrets etales
+(De Brouckere), la proximite rattrape les denominations divergentes entre
+metro et bus (Crainhem / Kraainem).
 
-Le nom d'arret ne sert plus d'identite, seulement d'etiquette d'affichage.
+La proximite se calcule par paires de points, sans construire de "lieux" :
+pas d'effet de chaine le long d'un boulevard.
 
 Sortie : croisements.json
 Licence des donnees : CC BY 4.0 - attribution obligatoire (voir champ "source").
@@ -215,22 +217,6 @@ def lignes_a_proximite(identifiant, points, grille, pas_lat, pas_lon,
 # Controle : comparaison avec l'ancienne methode (egalite des noms)
 # --------------------------------------------------------------------------
 
-def paires_par_nom(parcours, points):
-    """Paires de lignes qui partagent un nom d'arret normalise."""
-    desserte = {}
-    for ligne, sens_disponibles in parcours.items():
-        for suite in sens_disponibles.values():
-            for identifiant in suite:
-                desserte.setdefault(points[identifiant]["norm"], set()).add(ligne)
-    paires = {}
-    for norm, lignes in desserte.items():
-        ordonnees = sorted(lignes, key=cle_tri)
-        for i, a in enumerate(ordonnees):
-            for b in ordonnees[i + 1:]:
-                paires.setdefault((a, b), set()).add(norm)
-    return paires
-
-
 # --------------------------------------------------------------------------
 
 def construire():
@@ -257,6 +243,12 @@ def construire():
             for identifiant in suite:
                 lignes_par_point.setdefault(identifiant, set()).add(ligne)
 
+    # Quelles lignes desservent un arret portant ce nom ?
+    lignes_par_nom = {}
+    for identifiant, lignes_desservantes in lignes_par_point.items():
+        lignes_par_nom.setdefault(points[identifiant]["norm"], set()).update(
+            lignes_desservantes)
+
     grille, pas_lat, pas_lon = construire_grille(
         points, lignes_par_point.keys(), lignes_par_point)
 
@@ -265,14 +257,28 @@ def construire():
         for ligne, sens_disponibles in parcours.items()
     }
 
-    # Croisements : pour chaque etape, les lignes joignables a pied.
+    # Croisements : meme nom d'arret OU points a moins du seuil.
+    # Les deux criteres sont additionnes, jamais opposes : chacun rattrape
+    # les cas ou l'autre echoue.
+    origines = {}
     for ligne, etapes in etapes_par_ligne.items():
         for etape in etapes:
-            proches = set()
+            par_proximite = set()
             for identifiant in etape["ids"]:
-                proches |= lignes_a_proximite(
+                par_proximite |= lignes_a_proximite(
                     identifiant, points, grille, pas_lat, pas_lon, lignes_par_point)
-            etape["croisements"] = sorted(proches - {ligne}, key=cle_tri)
+            par_homonymie = lignes_par_nom.get(etape["norm"], set())
+            etape["croisements"] = sorted(
+                (par_proximite | par_homonymie) - {ligne}, key=cle_tri)
+            for autre in etape["croisements"]:
+                paire = tuple(sorted((ligne, autre), key=cle_tri))
+                trace = origines.setdefault(paire, {"nom": False, "distance": False,
+                                                    "via": set()})
+                trace["via"].add(etape["nom"])
+                if autre in par_homonymie:
+                    trace["nom"] = True
+                if autre in par_proximite:
+                    trace["distance"] = True
 
     lignes = {}
     for ligne in sorted(etapes_par_ligne, key=cle_tri):
@@ -300,17 +306,13 @@ def construire():
                 doublons.append({"lignes": [a, b], "arrets": meilleure})
     doublons.sort(key=lambda d: len(d["arrets"]), reverse=True)
 
-    # Controle : ecarts avec la methode par egalite des noms.
-    par_distance = {}
-    for ligne, etapes in etapes_par_ligne.items():
-        for etape in etapes:
-            for autre in etape["croisements"]:
-                paire = tuple(sorted((ligne, autre), key=cle_tri))
-                par_distance.setdefault(paire, set()).add(etape["nom"])
-    par_nom = paires_par_nom(parcours, points)
-
-    gagnes = sorted(set(par_distance) - set(par_nom), key=lambda p: (cle_tri(p[0]), cle_tri(p[1])))
-    perdus = sorted(set(par_nom) - set(par_distance), key=lambda p: (cle_tri(p[0]), cle_tri(p[1])))
+    # Controle : d'ou vient chaque paire de lignes ?
+    seulement_distance = sorted(
+        (p for p, t in origines.items() if t["distance"] and not t["nom"]),
+        key=lambda p: (cle_tri(p[0]), cle_tri(p[1])))
+    seulement_nom = sorted(
+        (p for p, t in origines.items() if t["nom"] and not t["distance"]),
+        key=lambda p: (cle_tri(p[0]), cle_tri(p[1])))
 
     return {
         "genere_le": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
@@ -324,20 +326,16 @@ def construire():
             "lignes_retenues": len(parcours),
             "points_localises": len(points),
             "identifiants_sans_nom": len(manquants),
-            "paires_gagnees": len(gagnes),
-            "paires_perdues": len(perdus),
-            # Paires de lignes que la distance revele et que le nom ignorait :
-            # a valider, ce sont les cas type Crainhem / Kraainem.
-            "exemples_gagnees": [
-                {"lignes": list(paire), "via": sorted(par_distance[paire])[:3]}
-                for paire in gagnes[:ECHANTILLON_CONTROLE]
-            ],
-            # Paires que le nom donnait et que la distance ne voit pas :
-            # deux arrets homonymes eloignes. Si la liste est longue,
-            # le seuil est trop court.
-            "exemples_perdues": [
-                {"lignes": list(paire), "arrets": sorted(par_nom[paire])[:3]}
-                for paire in perdus[:ECHANTILLON_CONTROLE]
+            "paires_total": len(origines),
+            # Paires que seule la proximite revele : noms differents de part
+            # et d'autre (type Crainhem / Kraainem).
+            "paires_par_distance_seule": len(seulement_distance),
+            # Paires que seule l'homonymie revele : arrets etales, quais
+            # eloignes de plus du seuil (type De Brouckere).
+            "paires_par_nom_seul": len(seulement_nom),
+            "exemples_distance_seule": [
+                {"lignes": list(paire), "via": sorted(origines[paire]["via"])[:3]}
+                for paire in seulement_distance[:ECHANTILLON_CONTROLE]
             ],
         },
     }
@@ -351,7 +349,8 @@ if __name__ == "__main__":
     c = resultat["controle"]
     print(f"{c['lignes_retenues']} lignes, {c['points_localises']} points localises, "
           f"{len(resultat['doublons'])} doublons de parcours")
-    print(f"seuil {DISTANCE_METRES} m : "
-          f"{c['paires_gagnees']} paires gagnees, {c['paires_perdues']} perdues")
+    print(f"{c['paires_total']} paires de lignes : "
+          f"{c['paires_par_distance_seule']} par la distance seule, "
+          f"{c['paires_par_nom_seul']} par le nom seul")
     if c["identifiants_sans_nom"]:
         print(f"ATTENTION : {c['identifiants_sans_nom']} points absents de StopDetails")
