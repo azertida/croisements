@@ -325,6 +325,15 @@ function afficherLigne(nom){
   window.scrollTo(0, 0);
 }
 
+/* ---------- hors ligne ---------- */
+
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("./service-worker.js", { scope: "./" })
+      .catch(() => { /* sans service worker, l'appli reste utilisable en ligne */ });
+  });
+}
+
 /* ---------- navigation ---------- */
 
 page.addEventListener("click", e => {
