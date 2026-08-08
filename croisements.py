@@ -282,8 +282,10 @@ def construire():
         lignes[ligne] = {
             "sens_reference": (SENS_REFERENCE if SENS_REFERENCE in parcours[ligne]
                                else next(iter(parcours[ligne]))),
+            # Tous les arrets, dans l'ordre : un fil troue ne se lit plus
+            # comme un parcours. Ceux sans correspondance ont une liste vide.
             "arrets": [{"arret": e["nom"], "croisements": e["croisements"]}
-                       for e in etapes_par_ligne[ligne] if e["croisements"]],
+                       for e in etapes_par_ligne[ligne]],
         }
 
     # Doublons de parcours : suites d'etapes consecutives partagees.
