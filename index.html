@@ -233,9 +233,22 @@ body{
 .voisin.tec{color:var(--tec)}
 .voisin.delijn{color:var(--delijn)}
 
-/* le mode de transport colore le contour de la pastille dans la grille */
-.pastille.metro{border-color:var(--violet)}
-.pastille.tram{border-color:var(--mauve)}
+/* Le mode de transport se lit a la densite de la pastille plutot qu'a sa
+   seule nuance : plein pour le metro, teinte pour le tram, vide pour le
+   bus. Trois niveaux qui tiennent meme en plein soleil. */
+.pastille.metro{
+  background:var(--violet);
+  border-color:var(--violet);
+  color:#fff;
+}
+.pastille.metro .compte{color:rgba(255,255,255,.78)}
+.pastille.metro:active{background:#472877}
+
+.pastille.tram{
+  background:var(--violet-pale);
+  border-color:var(--mauve);
+}
+.pastille.tram:active{background:#DFD2F0}
 
 .recherche{
   width:100%;
@@ -300,8 +313,8 @@ body{
   width:16px;height:16px;border-radius:5px;
   border:2px solid var(--trait);background:#fff;
 }
-.legende i.metro{border-color:var(--violet)}
-.legende i.tram{border-color:var(--mauve)}
+.legende i.metro{background:var(--violet);border-color:var(--violet)}
+.legende i.tram{background:var(--violet-pale);border-color:var(--mauve)}
 
 /* ---------- doublons ---------- */
 
@@ -358,7 +371,12 @@ let donnees = null;
 
 fetch("croisements.json")
   .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
-  .then(j => { donnees = j; construireIndex(); afficherGrille(); })
+  .then(j => {
+    donnees = j;
+    construireIndex();
+    history.replaceState({ vue: "grille", recherche: "" }, "");
+    afficherGrille();
+  })
   .catch(() => {
     page.innerHTML =
       '<p class="message">Les correspondances ne se chargent pas. ' +
@@ -454,7 +472,12 @@ function afficherGrille(recherche){
     '</div>';
 
   const champ = document.getElementById("recherche");
-  champ.addEventListener("input", () => afficherResultats(champ.value));
+  champ.addEventListener("input", () => {
+    afficherResultats(champ.value);
+    // on remplace l'etat courant : revenir en arriere depuis un arret
+    // doit retrouver la recherche telle qu'elle etait
+    history.replaceState({ vue: "grille", recherche: champ.value }, "");
+  });
   afficherResultats(champ.value);
   window.scrollTo(0, 0);
 }
@@ -622,15 +645,31 @@ if ("serviceWorker" in navigator) {
   });
 }
 
-/* ---------- navigation ---------- */
+/* ---------- navigation ----------
+   Chaque ecran est un etat de l'historique : le geste de retour depuis le
+   bord de l'ecran et le bouton du navigateur ramenent a l'ecran precedent
+   au lieu de quitter l'appli. */
+
+function rendre(etat){
+  if (!etat || etat.vue === "grille") afficherGrille(etat && etat.recherche);
+  else if (etat.vue === "arret") afficherArret(etat.cle);
+  else if (etat.vue === "ligne") afficherLigne(etat.nom);
+}
+
+function naviguer(etat){
+  history.pushState(etat, "");
+  rendre(etat);
+}
 
 page.addEventListener("click", e => {
   const cible = e.target.closest("[data-ligne],[data-arret],[data-retour]");
   if (!cible) return;
-  if (cible.dataset.retour) afficherGrille();
-  else if (cible.dataset.arret) afficherArret(cible.dataset.arret);
-  else afficherLigne(cible.dataset.ligne);
+  if (cible.dataset.retour) history.back();
+  else if (cible.dataset.arret) naviguer({ vue: "arret", cle: cible.dataset.arret });
+  else naviguer({ vue: "ligne", nom: cible.dataset.ligne });
 });
+
+window.addEventListener("popstate", e => rendre(e.state));
 </script>
 </body>
 </html>
