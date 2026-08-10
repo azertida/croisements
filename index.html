@@ -28,6 +28,7 @@
   --violet:#5B3499;
   --violet-pale:#EDE5F7;
   --trait:#D9CEBC;
+  --contour:#BCAA8C;
   --sncb:#2F6B4F;
   --tec:#8A3A4A;
   --delijn:#3B5C7E;
@@ -87,7 +88,7 @@ body{
   gap:1px;
   background:#fff;
   color:var(--encre);
-  border:2px solid var(--trait);
+  border:2px solid var(--contour);
   border-radius:14px;
   cursor:pointer;
   font-feature-settings:"tnum";
@@ -311,7 +312,7 @@ body{
 .legende span{display:inline-flex;align-items:center;gap:6px}
 .legende i{
   width:16px;height:16px;border-radius:5px;
-  border:2px solid var(--trait);background:#fff;
+  border:2px solid var(--contour);background:#fff;
 }
 .legende i.metro{background:var(--violet);border-color:var(--violet)}
 .legende i.tram{background:var(--violet-pale);border-color:var(--mauve)}
@@ -559,7 +560,7 @@ function afficherArret(cle){
 
   page.innerHTML =
     '<div class="vue">' +
-      '<button class="retour" data-retour="1">← Retour</button>' +
+      '<button class="retour" data-retour="1">← Toutes les lignes</button>' +
       '<h1 class="nom-lieu">' + echapper(lieu.nom) + '</h1>' +
       '<p class="sous-titre">Ce qui passe ici.</p>' +
       '<div class="correspondances" style="margin-top:20px">' + pastilles + '</div>' +
@@ -664,7 +665,9 @@ function naviguer(etat){
 page.addEventListener("click", e => {
   const cible = e.target.closest("[data-ligne],[data-arret],[data-retour]");
   if (!cible) return;
-  if (cible.dataset.retour) history.back();
+  // La fleche ramene a l'accueil, recherche effacee. Le balayage depuis le
+  // bord de l'ecran, lui, continue de defaire un pas a la fois.
+  if (cible.dataset.retour) naviguer({ vue: "grille", recherche: "" });
   else if (cible.dataset.arret) naviguer({ vue: "arret", cle: cible.dataset.arret });
   else naviguer({ vue: "ligne", nom: cible.dataset.ligne });
 });
