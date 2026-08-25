@@ -8,7 +8,7 @@
  * Pour forcer un renouvellement complet, changer VERSION.
  */
 
-const VERSION = "croisements-v8";
+const VERSION = "croisements-v9";
 
 const FICHIERS = [
   "./",

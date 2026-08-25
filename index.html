@@ -202,6 +202,17 @@ body{
 
 .lien-ligne:active{border-color:var(--violet)}
 
+/* Meme grammaire que dans la grille : plein pour le metro, teinte pour le
+   tram, vide pour le bus. Une pastille dit toujours la meme chose, qu'elle
+   soit dans le fil d'une ligne ou sur la fiche d'un arret. */
+.lien-ligne.metro{background:var(--violet);color:#fff}
+.lien-ligne.metro:active{background:#472877;border-color:var(--violet)}
+
+.lien-ligne.tram{background:var(--violet-pale);border-color:var(--mauve)}
+
+.lien-ligne.bus{background:#fff;border-color:var(--contour);color:var(--encre)}
+.lien-ligne.bus:active{border-color:var(--violet)}
+
 /* Reseaux voisins : contour plutot que fond plein, et pas de geste possible.
    La forme dit "ça ne s'ouvre pas", le sigle dit de qui il s'agit. */
 .voisin{
@@ -424,6 +435,11 @@ function construireIndex(){
   });
 }
 
+function modeDe(nomLigne){
+  const ligne = donnees.lignes[nomLigne];
+  return (ligne && ligne.mode) || "bus";
+}
+
 function classeReseau(reseau){
   return reseau === "TEC" ? "tec" : reseau === "De Lijn" ? "delijn" : "sncb";
 }
@@ -542,8 +558,8 @@ function afficherArret(cle){
 
   const pastilles =
     lignes.map(l =>
-      '<button class="lien-ligne" data-ligne="' + echapper(l) + '">' +
-      echapper(l) + '</button>'
+      '<button class="lien-ligne ' + modeDe(l) + '" data-ligne="' +
+      echapper(l) + '">' + echapper(l) + '</button>'
     ).join("") +
     Array.from(lieu.gares).map(g =>
       '<span class="voisin sncb">' +
@@ -583,8 +599,8 @@ function afficherLigne(nom){
   const arrets = ligne.arrets.map(a => {
     const pastilles =
       a.croisements.map(c =>
-        '<button class="lien-ligne" data-ligne="' + echapper(c) + '">' +
-        echapper(c) + '</button>'
+        '<button class="lien-ligne ' + modeDe(c) + '" data-ligne="' +
+        echapper(c) + '">' + echapper(c) + '</button>'
       ).join("") +
       (a.gares || []).map(g =>
         '<span class="voisin sncb">' +
@@ -625,8 +641,8 @@ function afficherLigne(nom){
             echapper(nom) + '.</p>' +
             '<div class="correspondances">' +
               doublons.map(d =>
-                '<button class="lien-ligne" data-ligne="' + echapper(d) + '">' +
-                echapper(d) + '</button>'
+                '<button class="lien-ligne ' + modeDe(d) + '" data-ligne="' +
+                echapper(d) + '">' + echapper(d) + '</button>'
               ).join("") +
             '</div>' +
           '</section>'
