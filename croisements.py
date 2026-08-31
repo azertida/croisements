@@ -46,12 +46,19 @@ URL_GTFS_SNCB = f"{GTFS}/nmbssncb/static"
 
 # Lignes des reseaux voisins que l'on veut voir apparaitre, et elles seules.
 RESEAUX_VOISINS = [
-    ("TEC",     f"{GTFS}/tec/static",     {"W", "365"}),
+    # "365" ne repond pas sous ce nom : il figure dans les donnees
+    # comme "365a". On garde les deux ecritures, celle qui existe gagne.
+    ("TEC",     f"{GTFS}/tec/static",     {"W", "365", "365a", "E12"}),
     ("De Lijn", f"{GTFS}/delijn/static",  {"R36", "R55"}),
 ]
 
-# Cadre large autour de Bruxelles, pour ecarter le reste du pays.
+# Cadre des gares SNCB : Bruxelles et sa proche peripherie. Au-dela, les
+# gares n'aideraient a rien et alourdiraient le fichier.
 CADRE = (50.72, 50.96, 4.20, 4.52)   # lat min, lat max, lon min, lon max
+
+# Cadre des lignes voisines : beaucoup plus large, parce qu'elles sont
+# nommees une a une. Le E12 va jusqu'a Louvain-la-Neuve.
+CADRE_LIGNES = (50.55, 51.05, 4.00, 4.80)
 
 MODES = {"0": "tram", "1": "metro", "2": "train", "3": "bus"}
 
@@ -360,8 +367,8 @@ def lire_table(archive, nom):
             yield enregistrement
 
 
-def dans_le_cadre(lat, lon):
-    lat_min, lat_max, lon_min, lon_max = CADRE
+def dans_le_cadre(lat, lon, cadre=CADRE):
+    lat_min, lat_max, lon_min, lon_max = cadre
     return lat_min <= lat <= lat_max and lon_min <= lon <= lon_max
 
 
@@ -471,7 +478,7 @@ def arrets_de_lignes(chemin, lignes_voulues):
             if not desservi:
                 continue
             position = coordonnees(arret)
-            if not position or not dans_le_cadre(*position):
+            if not position or not dans_le_cadre(*position, cadre=CADRE_LIGNES):
                 continue
             for ligne in sorted(desservi):
                 arrets.append((ligne, position[0], position[1]))
